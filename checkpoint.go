@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 
-	"carizon-device-plugin/logger"
+	"carizon-device-plugin/pkg/logger"
 )
 
 const (

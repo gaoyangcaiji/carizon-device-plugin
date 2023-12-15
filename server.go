@@ -12,15 +12,15 @@ import (
 	"sync"
 	"time"
 
-	"carizon-device-plugin/logger"
+	"carizon-device-plugin/pkg/logger"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
-// HorizonDevicePlugin implements the Kubernetes device plugin API
-type HorizonDevicePlugin struct {
+// CarizonDevicePlugin implements the Kubernetes device plugin API
+type CarizonDevicePlugin struct {
 	ResourceManager
 	resourceName  string
 	deviceListEnv string
@@ -34,10 +34,10 @@ type HorizonDevicePlugin struct {
 	sync.RWMutex
 }
 
-// NewHorizonDevicePlugin returns an initialized HorizonDevicePlugin
-func NewHorizonDevicePlugin(resourceName string, resourceManager ResourceManager, deviceListEnv string, socket string) *HorizonDevicePlugin {
+// NewCarizonDevicePlugin returns an initialized CarizonDevicePlugin
+func NewCarizonDevicePlugin(resourceName string, resourceManager ResourceManager, deviceListEnv string, socket string) *CarizonDevicePlugin {
 
-	return &HorizonDevicePlugin{
+	return &CarizonDevicePlugin{
 		ResourceManager: resourceManager,
 		resourceName:    resourceName,
 		deviceListEnv:   deviceListEnv,
@@ -53,7 +53,7 @@ func NewHorizonDevicePlugin(resourceName string, resourceManager ResourceManager
 	}
 }
 
-func (h *HorizonDevicePlugin) initialize() {
+func (h *CarizonDevicePlugin) initialize() {
 	h.cachedDevices = h.Devices()
 	h.server = grpc.NewServer([]grpc.ServerOption{}...)
 	h.health = make(chan *Device)
@@ -62,7 +62,7 @@ func (h *HorizonDevicePlugin) initialize() {
 }
 
 // Register registers the device plugin for the given resourceName with Kubelet.
-func (h *HorizonDevicePlugin) Register() error {
+func (h *CarizonDevicePlugin) Register() error {
 	conn, err := h.dial(pluginapi.KubeletSocket, 5*time.Second)
 	if err != nil {
 		return err
@@ -83,7 +83,7 @@ func (h *HorizonDevicePlugin) Register() error {
 	return nil
 }
 
-func (h *HorizonDevicePlugin) cleanup() {
+func (h *CarizonDevicePlugin) cleanup() {
 	close(h.stop)
 	h.cachedDevices = nil
 	h.server = nil
@@ -94,7 +94,7 @@ func (h *HorizonDevicePlugin) cleanup() {
 
 // Start starts the gRPC server, registers the device plugin with the Kubelet,
 // and starts the device healthchecks.
-func (h *HorizonDevicePlugin) Start() error {
+func (h *CarizonDevicePlugin) Start() error {
 	h.initialize()
 
 	err := h.Serve()
@@ -119,7 +119,7 @@ func (h *HorizonDevicePlugin) Start() error {
 }
 
 // Stop stops the gRPC server.
-func (h *HorizonDevicePlugin) Stop() error {
+func (h *CarizonDevicePlugin) Stop() error {
 	if h == nil || h.server == nil {
 		return nil
 	}
@@ -133,7 +133,7 @@ func (h *HorizonDevicePlugin) Stop() error {
 }
 
 // Serve starts the gRPC server of the device plugin.
-func (h *HorizonDevicePlugin) Serve() error {
+func (h *CarizonDevicePlugin) Serve() error {
 	os.Remove(h.socket)
 	sock, err := net.Listen("unix", h.socket)
 	if err != nil {
@@ -161,7 +161,7 @@ func (h *HorizonDevicePlugin) Serve() error {
 }
 
 // ListAndWatch lists devices and update that list according to the health status
-func (h *HorizonDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
+func (h *CarizonDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.DevicePlugin_ListAndWatchServer) error {
 	s.Send(&pluginapi.ListAndWatchResponse{Devices: h.apiDevices()})
 
 	for {
@@ -181,10 +181,10 @@ func (h *HorizonDevicePlugin) ListAndWatch(e *pluginapi.Empty, s pluginapi.Devic
 }
 
 // Allocate responses resource request
-func (h *HorizonDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
+func (h *CarizonDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	responses := pluginapi.AllocateResponse{}
 
-	logger.Wrapper.Infoln("----Allocating horizon device is started----")
+	logger.Wrapper.Infoln("----Allocating Carizon device is started----")
 	var (
 		info     *[]PCIeAddressInfo = new([]PCIeAddressInfo)
 		pcieFlag bool
@@ -195,7 +195,7 @@ func (h *HorizonDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Allo
 	for _, req := range reqs.ContainerRequests {
 		logger.Wrapper.Infof("Kubelet allocate deviceIDs:%+v", req.DevicesIDs)
 
-		if h.resourceName == resourceDomain+chipTypeJ5 {
+		if h.resourceName == resourceDomain {
 			pcieFlag = true
 
 			info, err = h.ResourceManager.GetAllocateDevicesInfo(req.DevicesIDs)
@@ -203,9 +203,6 @@ func (h *HorizonDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Allo
 				logger.Wrapper.Errorf("pcieInfo err: %+v", err)
 				return nil, err
 			}
-		}
-		if h.resourceName == resourceDomain+chipType2J5 {
-			pcieFlag = true
 		}
 
 		for _, id := range req.DevicesIDs {
@@ -222,8 +219,8 @@ func (h *HorizonDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Allo
 		response := pluginapi.ContainerAllocateResponse{
 			Envs: map[string]string{
 				h.deviceListEnv:          strings.Join(req.DevicesIDs, ","),
-				horizonDevicePcieInfoEnv: string(infoJSON),
-				horizonPcieFlagEnv:       strconv.FormatBool(pcieFlag),
+				CarizonDevicePcieInfoEnv: string(infoJSON),
+				CarizonPcieFlagEnv:       strconv.FormatBool(pcieFlag),
 			},
 		}
 		logger.Wrapper.Infof("the pcieinfo %s", string(infoJSON))
@@ -235,18 +232,18 @@ func (h *HorizonDevicePlugin) Allocate(ctx context.Context, reqs *pluginapi.Allo
 	return &responses, nil
 }
 
-// GetDevicePluginOptions get horizonDevicePlugin options
-func (h *HorizonDevicePlugin) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
+// GetDevicePluginOptions get CarizonDevicePlugin options
+func (h *CarizonDevicePlugin) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
 	return &pluginapi.DevicePluginOptions{}, nil
 }
 
-// PreStartContainer  get horizonDevicePlugin PreStartContainer
-func (h *HorizonDevicePlugin) PreStartContainer(context.Context, *pluginapi.PreStartContainerRequest) (*pluginapi.PreStartContainerResponse, error) {
+// PreStartContainer  get CarizonDevicePlugin PreStartContainer
+func (h *CarizonDevicePlugin) PreStartContainer(context.Context, *pluginapi.PreStartContainerRequest) (*pluginapi.PreStartContainerResponse, error) {
 	return &pluginapi.PreStartContainerResponse{}, nil
 }
 
 // dial establishes the gRPC communication
-func (h *HorizonDevicePlugin) dial(unixSocketPath string, timeout time.Duration) (*grpc.ClientConn, error) {
+func (h *CarizonDevicePlugin) dial(unixSocketPath string, timeout time.Duration) (*grpc.ClientConn, error) {
 	c, err := grpc.Dial(unixSocketPath, grpc.WithInsecure(), grpc.WithBlock(),
 		grpc.WithTimeout(timeout),
 		grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
@@ -261,7 +258,7 @@ func (h *HorizonDevicePlugin) dial(unixSocketPath string, timeout time.Duration)
 	return c, nil
 }
 
-func (h *HorizonDevicePlugin) deviceExists(id string) bool {
+func (h *CarizonDevicePlugin) deviceExists(id string) bool {
 	for _, d := range h.cachedDevices {
 		if d.ID == id {
 			return true
@@ -270,7 +267,7 @@ func (h *HorizonDevicePlugin) deviceExists(id string) bool {
 	return false
 }
 
-func (h *HorizonDevicePlugin) apiDevices() []*pluginapi.Device {
+func (h *CarizonDevicePlugin) apiDevices() []*pluginapi.Device {
 	var pdevs []*pluginapi.Device
 	for _, d := range h.cachedDevices {
 		pdevs = append(pdevs, &d.Device)

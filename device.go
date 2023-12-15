@@ -8,35 +8,33 @@ import (
 	"strings"
 	"time"
 
-	"carizon-device-plugin/logger"
+	"carizon-device-plugin/pkg/logger"
 
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
 const (
-	horizonDevicePcie        = "PCIe"
-	horizonDevicePcieInfoEnv = "PCIE_INFO"
-	horizonPcieFlagEnv       = "PCIE_FLAG"
+	CarizonDevicePcie        = "PCIe"
+	CarizonDevicePcieInfoEnv = "PCIE_INFO"
+	CarizonPcieFlagEnv       = "PCIE_FLAG"
 	healthCheckEnv           = "DEVICE_HEALTH_CHECK"
-	dmServerEnv              = "DEVICE_MANAGER_PORT"
-	resourceDomain           = "hobot.cc/"
-	resourceCount            = resourceDomain + horizonDevicePcie
+	cmdbServerEnv            = "BK_CMDB_CHART_PORT"
+	resourceDomain           = "carizon/"
+	resourceCount            = resourceDomain + CarizonDevicePcie
 	healthCheckInterval      = 10
-	chipTypeJ5               = "J5"
-	chipType2J5              = "2J5"
-	dmAPI                    = "/api/dev_manager/v1/"
-	fetchDevicesAPI          = dmAPI + "list"
-	fetchDeviceTypesAPI      = dmAPI + "devtypes"
-	checkHealthAPI           = dmAPI + "device/%d/healthy"
-	allocateDeviceAPI        = dmAPI + "allocate"
-	getAllocateDeviceInfoAPI = dmAPI + "list/devices"
+	cmdbAPI                  = "/api/v3/"
+	findInstassociationAPI   = cmdbAPI + "find/instassociation"
+	searchObjectInstsAPI     = cmdbAPI + "search/instances/object/%s"
+	checkHealthAPI           = cmdbAPI + "device/%d/healthy"
+	batchUpdateInstsAPI      = cmdbAPI + "/updatemany/instance/object/%s"
+	getAllocateDeviceInfoAPI = cmdbAPI + "list/devices"
 )
 
 // DeviceOffline represents offline status of the deivce
 var DeviceOffline = 1
 
-// DMServer address of the device-manager server
-var DMServer = getDeviceManagerServerAddr()
+// CmdbServer address of the cmdb server
+var CmdbServer = getCmdbServerAddr()
 
 // ResourceManager interface of the device resource maanger
 type ResourceManager interface {
@@ -46,13 +44,13 @@ type ResourceManager interface {
 	Allocate(deviceIPs []string)
 }
 
-// HorizonDeviceManager horzion device manager
-type HorizonDeviceManager struct {
+// CarizonDeviceManager horzion device manager
+type CarizonDeviceManager struct {
 	deviceType string
 }
 
-func getDeviceManagerServerAddr() string {
-	server := strings.ToLower(strings.TrimSpace(os.Getenv(dmServerEnv)))
+func getCmdbServerAddr() string {
+	server := strings.ToLower(strings.TrimSpace(os.Getenv(cmdbServerEnv)))
 	if strings.HasPrefix(server, "http://") {
 		return server
 	}
@@ -60,16 +58,16 @@ func getDeviceManagerServerAddr() string {
 	return server
 }
 
-// NewHorizonDeviceManager returns a new instance of HorizonDeviceManager
-func NewHorizonDeviceManager(deviceType string) *HorizonDeviceManager {
-	return &HorizonDeviceManager{deviceType: deviceType}
+// NewCarizonDeviceManager returns a new instance of CarizonDeviceManager
+func NewCarizonDeviceManager(deviceType string) *CarizonDeviceManager {
+	return &CarizonDeviceManager{deviceType: deviceType}
 }
 
 // Devices returns all devices
-func (h *HorizonDeviceManager) Devices() []*Device {
+func (c *CarizonDeviceManager) Devices() []*Device {
 	var devs []*Device
 
-	devices, err := getDevices(h.deviceType)
+	devices, err := getDevices(c.deviceType)
 	checkErr(err)
 
 	for _, d := range devices {
@@ -80,16 +78,16 @@ func (h *HorizonDeviceManager) Devices() []*Device {
 }
 
 // Allocate the device to job,then other job can not use the device
-func (h *HorizonDeviceManager) Allocate(deviceIPs []string) {
+func (h *CarizonDeviceManager) Allocate(deviceIPs []string) {
 	logger.Wrapper.Infof("Allocate deviceIPs: %+v", deviceIPs)
 	reqData := AllocateDeviceReq{DeviceIP: strings.Join(deviceIPs, ","), Allocated: true}
 	allocateDevice(reqData)
 }
 
 // GetAllocateDevicesInfo is get device ip and how many pcie occupied
-func (h *HorizonDeviceManager) GetAllocateDevicesInfo(deviceIPs []string) (info *[]PCIeAddressInfo, err error) {
+func (h *CarizonDeviceManager) GetAllocateDevicesInfo(deviceIPs []string) (info *[]PCIeAddressInfo, err error) {
 	data := map[string][]string{"ips": deviceIPs}
-	resp, err := HTTPClient.R().SetBody(data).Post(DMServer + getAllocateDeviceInfoAPI)
+	resp, err := HTTPClient.R().SetBody(data).Post(CmdbServer + getAllocateDeviceInfoAPI)
 
 	_, _, err = checkHTTPResponse(resp, err)
 	if err != nil {
@@ -117,7 +115,7 @@ func buildDevice(d *externalDevice) *Device {
 }
 
 // CheckHealth checks health of the devices
-func (h *HorizonDeviceManager) CheckHealth(stop <-chan interface{}, devices []*Device, healthy, unhealthy chan<- *Device) {
+func (h *CarizonDeviceManager) CheckHealth(stop <-chan interface{}, devices []*Device, healthy, unhealthy chan<- *Device) {
 	checkHealth(stop, devices, healthy, unhealthy)
 }
 
@@ -162,9 +160,10 @@ func getDevices(deviceType string) ([]*externalDevice, error) {
 
 	log.Printf("Query %s devices on node: %s", deviceType, nodeName)
 
-	params := map[string]string{"bind_node": nodeName, "chip_type": deviceType}
+	params := map[string]string{"bind_node": nodeName, "device_type": deviceType}
 	req := HTTPClient.R().SetQueryParams(params)
-	resp, err := req.Get(DMServer + fetchDevicesAPI)
+	resp, err := req.Get(CmdbServer + findInstassociationAPI)
+
 	_, _, err = checkHTTPResponse(resp, err)
 	if err != nil {
 		log.Printf("Error. Failed to query %s bind devices on node %s. %v", deviceType, nodeName, err)
@@ -189,7 +188,7 @@ func getDevices(deviceType string) ([]*externalDevice, error) {
 
 func isDeviceHealthy(uuid int) bool {
 	healthy := true
-	resp, err := HTTPClient.R().Get(DMServer + fmt.Sprintf(checkHealthAPI, uuid))
+	resp, err := HTTPClient.R().Get(CmdbServer + fmt.Sprintf(checkHealthAPI, uuid))
 	_, _, err = checkHTTPResponse(resp, err)
 	if err != nil {
 		log.Printf("Error. Failed to get device healthy. %v", err.Error())
@@ -204,26 +203,8 @@ func isDeviceHealthy(uuid int) bool {
 	return healthy
 }
 
-func getDeviceTypes() ([]string, error) {
-	types := []string{}
-	resp, err := HTTPClient.R().Get(DMServer + fetchDeviceTypesAPI)
-	_, _, err = checkHTTPResponse(resp, err)
-	if err != nil {
-		log.Printf("Error. Failed to get device types. %v", err.Error())
-		return types, err
-	}
-
-	var ret *HTTPRetDeviceTypes
-	_ = json.Unmarshal(resp.Body(), &ret)
-	if v, ok := ret.Data["types"]; ok {
-		types = v
-	}
-
-	return types, nil
-}
-
 func allocateDevice(data AllocateDeviceReq) {
-	resp, err := HTTPClient.R().SetBody(data).Post(DMServer + allocateDeviceAPI)
+	resp, err := HTTPClient.R().SetBody(data).Post(CmdbServer + batchUpdateInstsAPI)
 
 	_, _, err = checkHTTPResponse(resp, err)
 

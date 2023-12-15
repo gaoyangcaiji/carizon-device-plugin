@@ -1,13 +1,13 @@
 package main
 
 import (
-	"flag"
+	"carizon-device-plugin/conf"
+	"carizon-device-plugin/pkg/logger"
+	"carizon-device-plugin/pkg/nacos"
 	"math/rand"
 	"strings"
 	"syscall"
 	"time"
-
-	"carizon-device-plugin/logger"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/robfig/cron"
@@ -17,21 +17,15 @@ import (
 // HTTPClient init resty client
 var HTTPClient = newHTTPClient()
 
-func getAllPlugins() []*HorizonDevicePlugin {
-	deviceTypes, err := getDeviceTypes()
-	checkErr(err)
-
-	plugins := []*HorizonDevicePlugin{}
-	for _, t := range deviceTypes {
-		//compatible with device manager,device manager read nacos need have this chiptype
-		if t == horizonDevicePcie {
-			continue
-		}
-		plugin := NewHorizonDevicePlugin(
-			resourceDomain+t,
-			NewHorizonDeviceManager(t),
-			"HORIZON_DEVICE_"+t+"_IP_LIST",
-			pluginapi.DevicePluginPath+"horizon_"+t+".sock")
+func getAllPlugins() []*CarizonDevicePlugin {
+	plugins := []*CarizonDevicePlugin{}
+	for _, t := range conf.Conf.ResourceDevices {
+		// TODO: 对子资源也进行处理
+		plugin := NewCarizonDevicePlugin(
+			resourceDomain+t.ResourceName,
+			NewCarizonDeviceManager(t.ResourceName),
+			"CARIZON_DEVICE_"+t.ResourceName+"_IP_LIST",
+			pluginapi.DevicePluginPath+"carizon_"+t.ResourceName+".sock")
 		plugins = append(plugins, plugin)
 	}
 	return plugins
@@ -53,7 +47,7 @@ func startCron() {
 func refreshDeviceReserved() {
 	var deviceList []string
 
-	deviceManager := NewHorizonDeviceManager("")
+	deviceManager := NewCarizonDeviceManager("")
 	client, _ := GetResourceClient("")
 	resourceInfos, _ := client.GetPodResourceMap()
 
@@ -76,12 +70,12 @@ func refreshDeviceReserved() {
 }
 
 func main() {
-	flag.Parse()
+	nacos.Init("model", "DEFAULT_GROUP", "carizon.cmdb", "config", &conf.Conf)
 
 	if HTTPClient == nil {
 		logger.Wrapper.Fatalln("[main] Failed to init HTTPClient")
 	}
-	// TODO: verify horizon device-manager accessible
+	// TODO: verify Carizon device-manager accessible
 	logger.Wrapper.Infoln("[main] Starting FS watcher.")
 	watcher, err := newFSWatcher(pluginapi.DevicePluginPath)
 	if err != nil {

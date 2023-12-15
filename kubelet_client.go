@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"carizon-device-plugin/logger"
+	"carizon-device-plugin/pkg/logger"
 
 	"golang.org/x/net/context"
 

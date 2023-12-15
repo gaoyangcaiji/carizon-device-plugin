@@ -48,17 +48,19 @@ func newOSWatcher(sigs ...os.Signal) chan os.Signal {
 }
 
 func newHTTPClient() *resty.Client {
-	client := resty.New()
-	client.SetTimeout(10 * time.Second)
-	client.SetRetryCount(3)
-	client.SetRetryWaitTime(10 * time.Second)
-	client.SetRedirectPolicy(resty.FlexibleRedirectPolicy(3))
 	headers := map[string]string{
 		"Content-Type":     "application/json",
 		"X-Forwarded-User": adminUser,
 		"X-Forwarded-Uid":  adminUID,
 	}
-	client.SetHeaders(headers)
+
+	client := resty.New()
+	client.SetTimeout(10 * time.Second).
+		SetRetryCount(3).
+		SetRetryWaitTime(10 * time.Second).
+		SetRedirectPolicy(resty.FlexibleRedirectPolicy(3)).
+		SetHeaders(headers)
+
 	return client
 }
 
