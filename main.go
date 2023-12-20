@@ -2,6 +2,7 @@ package main
 
 import (
 	"carizon-device-plugin/conf"
+	httpclient "carizon-device-plugin/pkg/client"
 	"carizon-device-plugin/pkg/logger"
 	"carizon-device-plugin/pkg/nacos"
 	"math/rand"
@@ -15,7 +16,7 @@ import (
 )
 
 // HTTPClient init resty client
-var HTTPClient = newHTTPClient()
+var CmdbApiClient = httpclient.NewClient()
 
 func getAllPlugins() []*CarizonDevicePlugin {
 	plugins := []*CarizonDevicePlugin{}
@@ -72,8 +73,8 @@ func refreshDeviceReserved() {
 func main() {
 	nacos.Init("model", "DEFAULT_GROUP", "carizon.cmdb", "config", &conf.Conf)
 
-	if HTTPClient == nil {
-		logger.Wrapper.Fatalln("[main] Failed to init HTTPClient")
+	if CmdbApiClient == nil {
+		logger.Wrapper.Fatalln("[main] Failed to init CmdbApiClient")
 	}
 	// TODO: verify Carizon device-manager accessible
 	logger.Wrapper.Infoln("[main] Starting FS watcher.")

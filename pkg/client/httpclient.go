@@ -2,10 +2,9 @@ package httpclient
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"time"
 
 	"carizon-device-plugin/pkg/logger"
@@ -14,6 +13,10 @@ import (
 )
 
 const (
+	// TODO: remove this hardcode
+	adminUser = ""
+	adminUID  = ""
+
 	// HeaderContentType content type
 	HeaderContentType = "Content-Type"
 
@@ -32,109 +35,61 @@ var (
 	EmptyQuery = map[string]string{}
 )
 
-// Option is the options for client
-type Option func(*options)
-
-type options struct {
-	retry          int32                             // 重试次数
-	retryCheckFunc func(*resty.Response, error) bool // 重试check函数
-	timeout        time.Duration                     // 超时时间
-	proxy          string                            // 代理
-	queryValues    url.Values                        // Get方法参数数组
-}
-
-// WithRetry 设置重试次数
-func WithRetry(retry int32) Option {
-	return func(o *options) {
-		o.retry = retry
-	}
-}
-
-// WithRetryCheckFunc 设置重试check函数
-func WithRetryCheckFunc(f func(response *resty.Response, err error) bool) Option {
-	return func(o *options) {
-		o.retryCheckFunc = f
-	}
-}
-
-// WithTimeout 设置超时时间(单位:毫秒)
-func WithTimeout(t time.Duration) Option {
-	return func(o *options) {
-		o.timeout = t
-	}
-}
-
-// WithProxy 设置代理
-func WithProxy(p string) Option {
-	return func(o *options) {
-		o.proxy = p
-	}
-}
-
-// WithSetQueryValues 设置Get方法数组参数
-func WithSetQueryValues(v url.Values) Option {
-	return func(o *options) {
-		o.queryValues = v
-	}
-}
-
 type client struct {
-	url    string
 	header map[string]string
 	cli    *resty.Client
-	opt    *options
 }
 
-// NewIClient 创建HTTP client对象
-func NewIClient(opts ...Option) IClient {
-	opt := &options{}
-	for _, option := range opts {
-		option(opt)
+type Result struct {
+	Body       []byte
+	Err        error
+	StatusCode int
+	Status     string
+	Header     http.Header
+}
+
+func NewClient() IClient {
+	headers := map[string]string{
+		"Content-Type":     "application/json",
+		"X-Forwarded-User": adminUser,
+		"X-Forwarded-Uid":  adminUID,
 	}
 
+	cli := resty.New()
+	cli.SetTimeout(10 * time.Second).
+		SetRetryCount(3).
+		SetRetryWaitTime(10 * time.Second).
+		SetRedirectPolicy(resty.FlexibleRedirectPolicy(3)).
+		SetHeaders(headers).
+		EnableTrace()
+
 	return &client{
-		cli: resty.New(),
-		opt: opt,
+		cli:    cli,
+		header: headers,
 	}
 }
 
 type IClient interface {
-	DoGet(ctx context.Context, url string, header, query map[string]string, timeout int) (body []byte, err error)
-	DoPost(ctx context.Context, url string, header map[string]string, body interface{}, timeout int) (data []byte, err error)
-	DoDelete(ctx context.Context, url string, header map[string]string, timeout int) (body []byte, err error)
+	DoGet(ctx context.Context, url string, header, query map[string]string) (data []byte, err error)
+	DoPost(ctx context.Context, url string, header map[string]string, body interface{}) (r *Result)
+	DoDelete(ctx context.Context, url string, header map[string]string, timeout int) (data []byte, err error)
 	GetCli() *resty.Client
-	GetOpt() *options
 }
 
 func (c *client) GetCli() *resty.Client {
 	return c.cli
 }
 
-func (c *client) GetOpt() *options {
-	return c.opt
-}
-
 // DoGet get方法 timeout单位：s
-func (c *client) DoGet(ctx context.Context, url string, header, query map[string]string, timeout int) (body []byte, err error) {
-	cf := func(response *resty.Response, err error) bool {
-		logger.Wrapper.Errorf("[HTTP][Get] retry failed, resp: %+v, err: %+v", response, err)
-		return err != nil || response.StatusCode() != http.StatusOK
-	}
-	if c.opt.retryCheckFunc != nil {
-		cf = c.opt.retryCheckFunc
-	}
-
-	start := time.Now()
-	// https://github.com/go-resty/resty#retries
-	req := c.cli.AddRetryCondition(cf).SetRetryCount(int(c.opt.retry)).SetTimeout(time.Second * time.Duration(timeout)).R().SetContext(ctx).EnableTrace().SetHeaders(header).SetQueryParams(query)
-	if c.opt.queryValues != nil {
-		req.SetQueryParamsFromValues(c.opt.queryValues)
-	}
+func (c *client) DoGet(ctx context.Context, url string, header, query map[string]string) (body []byte, err error) {
+	req := c.cli.R().SetContext(ctx).SetHeaders(header).SetQueryParams(query)
 	resp, err := req.Get(url)
 	if err != nil {
 		return
 	}
-	duration := time.Since(start)
+	duration := resp.Time()
+
+	logger.Wrapper.Infof("retry times:%d", resp.Request.TraceInfo().RequestAttempt)
 
 	body = resp.Body()
 
@@ -156,74 +111,45 @@ func (c *client) DoGet(ctx context.Context, url string, header, query map[string
 //	form: map[string]string
 //
 // timeout单位：s
-func (c *client) DoPost(ctx context.Context, url string, header map[string]string, body interface{}, timeout int) (data []byte, err error) {
-
-	cf := func(response *resty.Response, err error) bool {
-		logger.Wrapper.Errorf("[HTTP][Post] retry failed, resp: %+v, err: %+v", response, err)
-		return err != nil || response.StatusCode() != http.StatusOK
-	}
-	if c.opt.retryCheckFunc != nil {
-		cf = c.opt.retryCheckFunc
-	}
-
+func (c *client) DoPost(ctx context.Context, url string, header map[string]string, body interface{}) (result *Result) {
 	// 默认json格式
 	if header[HeaderContentType] == "" {
 		header[HeaderContentType] = ContentTypeJson
 	}
 
-	req := c.cli.AddRetryCondition(cf).
-		SetRetryCount(int(c.opt.retry)).
-		SetTimeout(time.Second * time.Duration(timeout)).
-		R().
-		SetContext(ctx).
-		EnableTrace().
-		SetHeaders(header)
+	req := c.cli.R().SetContext(ctx).SetHeaders(header).SetBody(body)
 
-	switch header[HeaderContentType] {
-	case ContentTypeFormEncoded:
-		q := body.(map[string]string)
-		req = req.SetFormData(q)
-	case ContentTypeText, ContentTypeJson:
-		req = req.SetBody(body)
-	default:
-		err = errors.New("http/post not support content-type")
-		return
+	if len(req.Header) == 0 {
+		req.Header = make(http.Header)
 	}
 
-	start := time.Now()
+	// 删除 Accept-Encoding 避免返回值被压缩
+	req.Header.Del("Accept-Encoding")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 	resp, err := req.Post(url)
 	if err != nil {
-		return
-	}
-	duration := time.Since(start)
-
-	data = resp.Body()
-
-	fmt.Println(duration.Seconds())
-	logger.Wrapper.Debugf("[HTTP][Post] url:%s status:%d body:%+v cost: %fs",
-		url, resp.StatusCode(), body, duration.Seconds())
-
-	if resp.StatusCode() != http.StatusOK {
-		err = newHttpError(url, int32(resp.StatusCode()))
+		result.Err = err
 		return
 	}
 
-	return
+	logger.Wrapper.Debugf("[CmdbApiClient] cost: %dms,%s %s with body %s, response status: %s, "+
+		"response body: %s", resp.Time().Seconds(),
+		resp.Request.Method, url, body, resp.Status, resp.Body())
+
+	result.Body = resp.Body()
+	result.StatusCode = resp.StatusCode()
+	result.Status = resp.Status()
+	result.Header = resp.Header()
+	return result
 }
 
 // DoDelete delete方法 timeout单位：s
 func (c *client) DoDelete(ctx context.Context, url string, header map[string]string, timeout int) (body []byte, err error) {
-	cf := func(response *resty.Response, err error) bool {
-		logger.Wrapper.Errorf("[HTTP][Delete] retry failed, resp: %+v, err: %+v", response, err)
-		return err != nil || response.StatusCode() != http.StatusOK
-	}
-	if c.opt.retryCheckFunc != nil {
-		cf = c.opt.retryCheckFunc
-	}
 
 	start := time.Now()
 	// https://github.com/go-resty/resty#retries
-	req := c.cli.AddRetryCondition(cf).SetRetryCount(int(c.opt.retry)).SetTimeout(time.Second * time.Duration(timeout)).R().SetContext(ctx).EnableTrace().SetHeaders(header)
+	req := c.cli.R().SetContext(ctx).EnableTrace().SetHeaders(header)
 	resp, err := req.Delete(url)
 	if err != nil {
 		return
@@ -262,8 +188,23 @@ func newHttpError(url string, status int32) HttpError {
 	return HttpError{url: url, status: status}
 }
 
-type APIResult struct {
-	Code int         `json:"code"`
-	Msg  string      `json:"msg"`
-	Data interface{} `json:"data"`
+// Into TODO
+func (r *Result) Into(obj interface{}) error {
+	if nil != r.Err {
+		return r.Err
+	}
+
+	if 0 != len(r.Body) {
+		err := json.Unmarshal(r.Body, obj)
+		if err != nil {
+			if r.StatusCode >= 300 {
+				return fmt.Errorf("http request err: %s", string(r.Body))
+			}
+			logger.Wrapper.Errorf("invalid response body, unmarshal json failed, reply:%s, error:%s", r.Body, err.Error())
+			return fmt.Errorf("http response err: %v, raw data: %s", err, r.Body)
+		}
+	} else if r.StatusCode >= 300 {
+		return fmt.Errorf("http request failed: %s", r.Status)
+	}
+	return nil
 }

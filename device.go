@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"carizon-device-plugin/metadata"
 	"carizon-device-plugin/pkg/logger"
+	"carizon-device-plugin/pkg/mapstr"
 
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
@@ -80,6 +83,23 @@ func (c *CarizonDeviceManager) Devices() []*Device {
 // Allocate the device to job,then other job can not use the device
 func (h *CarizonDeviceManager) Allocate(deviceIPs []string) {
 	logger.Wrapper.Infof("Allocate deviceIPs: %+v", deviceIPs)
+
+	//SearchAssociationInsts
+	option := &metadata.SearchAssociationInstRequest{
+		ObjID: objectID,
+		Condition: mapstr.MapStr{
+			"bk_inst_id": nodeName,
+			"bk_obj_id":  objectID,
+		},
+	}
+
+	resp := new(metadata.SearchAssociationInstResult)
+	err = CmdbApiClient.DoPost(context.Background(), CmdbServer+findInstassociationAPI, map[string]string{}, option).Into(resp)
+	if err != nil {
+		logger.Wrapper.Errorf("Error. Failed to query %s bind devices on node %s. %v", deviceType, nodeName, err)
+		return eDevices, nil
+	}
+
 	reqData := AllocateDeviceReq{DeviceIP: strings.Join(deviceIPs, ","), Allocated: true}
 	allocateDevice(reqData)
 }
@@ -87,7 +107,7 @@ func (h *CarizonDeviceManager) Allocate(deviceIPs []string) {
 // GetAllocateDevicesInfo is get device ip and how many pcie occupied
 func (h *CarizonDeviceManager) GetAllocateDevicesInfo(deviceIPs []string) (info *[]PCIeAddressInfo, err error) {
 	data := map[string][]string{"ips": deviceIPs}
-	resp, err := HTTPClient.R().SetBody(data).Post(CmdbServer + getAllocateDeviceInfoAPI)
+	resp, err := CmdbApiClient.DoPost(context.Background(), CmdbServer+getAllocateDeviceInfoAPI, data, data)
 
 	_, _, err = checkHTTPResponse(resp, err)
 	if err != nil {
@@ -151,6 +171,7 @@ func checkHealth(stop <-chan interface{}, devices []*Device, healthy, unhealthy 
 }
 
 func getDevices(deviceType string) ([]*externalDevice, error) {
+	objectID := "host"
 	eDevices := []*externalDevice{}
 	nodeName, err := os.Hostname()
 	if err != nil {
@@ -160,35 +181,40 @@ func getDevices(deviceType string) ([]*externalDevice, error) {
 
 	log.Printf("Query %s devices on node: %s", deviceType, nodeName)
 
-	params := map[string]string{"bind_node": nodeName, "device_type": deviceType}
-	req := HTTPClient.R().SetQueryParams(params)
-	resp, err := req.Get(CmdbServer + findInstassociationAPI)
+	//SearchAssociationInsts
+	option := &metadata.SearchAssociationInstRequest{
+		ObjID: objectID,
+		Condition: mapstr.MapStr{
+			"bk_inst_id": nodeName,
+			"bk_obj_id":  objectID,
+		},
+	}
 
-	_, _, err = checkHTTPResponse(resp, err)
+	resp := new(metadata.SearchAssociationInstResult)
+	err = CmdbApiClient.DoPost(context.Background(), CmdbServer+findInstassociationAPI, map[string]string{}, option).Into(resp)
 	if err != nil {
-		log.Printf("Error. Failed to query %s bind devices on node %s. %v", deviceType, nodeName, err)
+		logger.Wrapper.Errorf("Error. Failed to query %s bind devices on node %s. %v", deviceType, nodeName, err)
 		return eDevices, nil
 	}
 
-	var ret *HTTPRetDeviceList
-	_ = json.Unmarshal(resp.Body(), &ret)
-	if v, ok := ret.Data["list"]; ok {
-		for _, d := range v {
-			if d.Status == int8(DeviceOffline) {
-				continue
-			}
-			eDevice := externalDevice{}
-			eDevice.UUID = d.ID
-			eDevice.IP = d.IP
-			eDevices = append(eDevices, &eDevice)
+	for _, d := range resp.Data {
+		if d.Status == int8(DeviceOffline) {
+			continue
 		}
+		eDevice := externalDevice{}
+		eDevice.UUID = d.ID
+		eDevice.IP = d.IP
+		eDevices = append(eDevices, &eDevice)
 	}
+
+	//SearchAssociationInsts
+
 	return eDevices, nil
 }
 
 func isDeviceHealthy(uuid int) bool {
 	healthy := true
-	resp, err := HTTPClient.R().Get(CmdbServer + fmt.Sprintf(checkHealthAPI, uuid))
+	resp, err := CmdbApiClient.R().Get(CmdbServer + fmt.Sprintf(checkHealthAPI, uuid))
 	_, _, err = checkHTTPResponse(resp, err)
 	if err != nil {
 		log.Printf("Error. Failed to get device healthy. %v", err.Error())
@@ -204,7 +230,7 @@ func isDeviceHealthy(uuid int) bool {
 }
 
 func allocateDevice(data AllocateDeviceReq) {
-	resp, err := HTTPClient.R().SetBody(data).Post(CmdbServer + batchUpdateInstsAPI)
+	resp, err := CmdbApiClient.R().SetBody(data).Post(CmdbServer + batchUpdateInstsAPI)
 
 	_, _, err = checkHTTPResponse(resp, err)
 

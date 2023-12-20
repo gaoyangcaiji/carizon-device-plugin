@@ -7,10 +7,12 @@ require (
 	github.com/go-resty/resty/v2 v2.4.0
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
+	github.com/mohae/deepcopy v0.0.0-20170603005431-491d3605edfb
 	github.com/nacos-group/nacos-sdk-go v1.1.4
 	github.com/pelletier/go-toml v1.2.0
 	github.com/robfig/cron v1.1.0
 	github.com/spf13/viper v1.3.2
+	github.com/stretchr/testify v1.5.1
 	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd
 	golang.org/x/sys v0.0.0-20220209214540-3681064d5158 // indirect
 	google.golang.org/genproto v0.0.0-20210402141018-6c239bbf2bb1 // indirect

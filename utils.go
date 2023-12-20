@@ -5,16 +5,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/go-resty/resty/v2"
-)
-
-const (
-	// TODO: remove this hardcode
-	adminUser = ""
-	adminUID  = ""
 )
 
 func checkErr(err error) {
@@ -45,23 +38,6 @@ func newOSWatcher(sigs ...os.Signal) chan os.Signal {
 	signal.Notify(sigChan, sigs...)
 
 	return sigChan
-}
-
-func newHTTPClient() *resty.Client {
-	headers := map[string]string{
-		"Content-Type":     "application/json",
-		"X-Forwarded-User": adminUser,
-		"X-Forwarded-Uid":  adminUID,
-	}
-
-	client := resty.New()
-	client.SetTimeout(10 * time.Second).
-		SetRetryCount(3).
-		SetRetryWaitTime(10 * time.Second).
-		SetRedirectPolicy(resty.FlexibleRedirectPolicy(3)).
-		SetHeaders(headers)
-
-	return client
 }
 
 func checkHTTPResponse(r *resty.Response, err error) (int, []byte, error) {
