@@ -72,6 +72,7 @@ func NewClient() IClient {
 type IClient interface {
 	DoGet(ctx context.Context, url string, header, query map[string]string) (data []byte, err error)
 	DoPost(ctx context.Context, url string, header map[string]string, body interface{}) (r *Result)
+	DoPut(ctx context.Context, url string, header map[string]string, body interface{}) (r *Result)
 	DoDelete(ctx context.Context, url string, header map[string]string, timeout int) (data []byte, err error)
 	GetCli() *resty.Client
 }
@@ -128,6 +129,46 @@ func (c *client) DoPost(ctx context.Context, url string, header map[string]strin
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	resp, err := req.Post(url)
+	if err != nil {
+		result.Err = err
+		return
+	}
+
+	logger.Wrapper.Debugf("[CmdbApiClient] cost: %dms,%s %s with body %s, response status: %s, "+
+		"response body: %s", resp.Time().Seconds(),
+		resp.Request.Method, url, body, resp.Status, resp.Body())
+
+	result.Body = resp.Body()
+	result.StatusCode = resp.StatusCode()
+	result.Status = resp.Status()
+	result.Header = resp.Header()
+	return result
+}
+
+// DoPut Put方法，只支持json格式
+// 对于body会做校验，使用form格式之前一定要设置header头
+//
+//	json: []byte
+//	form: map[string]string
+//
+// timeout单位：s
+func (c *client) DoPut(ctx context.Context, url string, header map[string]string, body interface{}) (result *Result) {
+	// 默认json格式
+	if header[HeaderContentType] == "" {
+		header[HeaderContentType] = ContentTypeJson
+	}
+
+	req := c.cli.R().SetContext(ctx).SetHeaders(header).SetBody(body)
+
+	if len(req.Header) == 0 {
+		req.Header = make(http.Header)
+	}
+
+	// 删除 Accept-Encoding 避免返回值被压缩
+	req.Header.Del("Accept-Encoding")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := req.Put(url)
 	if err != nil {
 		result.Err = err
 		return
