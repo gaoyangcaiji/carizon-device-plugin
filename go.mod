@@ -8,7 +8,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170603005431-491d3605edfb
-	github.com/nacos-group/nacos-sdk-go v1.1.4
+	github.com/nacos-group/nacos-sdk-go v1.0.9
 	github.com/pelletier/go-toml v1.2.0
 	github.com/robfig/cron v1.1.0
 	github.com/spf13/viper v1.3.2
